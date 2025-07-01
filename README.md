@@ -298,3 +298,130 @@ import sqlite3
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+
+## Architecture Diagram
+
+graph TB
+    %% User Interface Layer
+    subgraph "🖥️ User Interface Layer"
+        UI[Streamlit Web Interface]
+        QA[Quick Actions Panel]
+        CH[Chat History]
+        CF[Configuration Form]
+    end
+
+    %% Application Layer
+    subgraph "🤖 Application Layer"
+        SC[StreamlitGitLabChatbot]
+        GA[GitLabAgent - AutoGen]
+        UP[UserProxyAgent]
+        MC[GitLabMCPClient]
+    end
+
+    %% Protocol Layer
+    subgraph "📡 Protocol Layer (MCP)"
+        MS[GitLabMCPServer]
+        TH[Tool Handlers]
+        RH[Resource Handlers]
+        CH2[Call Handlers]
+    end
+
+    %% Integration Layer
+    subgraph "🔌 Integration Layer"
+        HC[HTTPX Client]
+        API[GitLab API Client]
+        LLM[OpenAI LLM Client]
+    end
+
+    %% External Services
+    subgraph "🌐 External Services"
+        GL[GitLab Instance]
+        OAI[OpenAI API]
+        FS[File System]
+    end
+
+    %% Data Flow
+    UI --> SC
+    QA --> SC
+    CF --> SC
+    
+    SC --> GA
+    GA --> UP
+    GA --> MC
+    
+    MC -.->|JSON-RPC| MS
+    MS --> TH
+    MS --> RH
+    MS --> CH2
+    
+    TH --> HC
+    RH --> HC
+    CH2 --> HC
+    
+    HC --> API
+    API --> GL
+    
+    GA --> LLM
+    LLM --> OAI
+    
+    %% Configuration Flow
+    SC -.->|Environment Variables| API
+    SC -.->|LLM Config| LLM
+    
+    %% Data Storage
+    SC --> CH
+    SC --> FS
+    
+    %% Styling
+    classDef uiLayer fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef appLayer fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef protocolLayer fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef integrationLayer fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef externalLayer fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    
+    class UI,QA,CH,CF uiLayer
+    class SC,GA,UP,MC appLayer
+    class MS,TH,RH,CH2 protocolLayer
+    class HC,API,LLM integrationLayer
+    class GL,OAI,FS externalLayer
+
+    %% Component Details
+    subgraph "🔧 MCP Tools & Resources"
+        T1[list_projects]
+        T2[create_issue]
+        T3[list_issues]
+        T4[create_merge_request]
+        T5[list_merge_requests]
+        T6[get_file_content]
+        T7[get_project]
+        
+        R1[gitlab://projects]
+        R2[gitlab://issues]
+        R3[gitlab://merge_requests]
+    end
+    
+    TH --> T1
+    TH --> T2
+    TH --> T3
+    TH --> T4
+    TH --> T5
+    TH --> T6
+    TH --> T7
+    
+    RH --> R1
+    RH --> R2
+    RH --> R3
+    
+    class T1,T2,T3,T4,T5,T6,T7,R1,R2,R3 protocolLayer
+
+    %% Detailed Flow Annotations
+    MC -.->|"1. Initialize MCP Connection"| MS
+    GA -.->|"2. Natural Language Processing"| LLM
+    MC -.->|"3. Tool Execution Request"| MS
+    MS -.->|"4. GitLab API Calls"| GL
+    GL -.->|"5. Response Data"| MS
+    MS -.->|"6. Formatted Results"| MC
+    MC -.->|"7. Response to Agent"| GA
+    GA -.->|"8. Human-readable Output"| SC
+    SC -.->|"9. UI Update"| UI
