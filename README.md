@@ -302,6 +302,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Architecture Diagram
 
+```mermaid
 graph TB
     %% User Interface Layer
     subgraph "🖥️ User Interface Layer"
@@ -425,3 +426,4 @@ graph TB
     MC -.->|"7. Response to Agent"| GA
     GA -.->|"8. Human-readable Output"| SC
     SC -.->|"9. UI Update"| UI
+```
