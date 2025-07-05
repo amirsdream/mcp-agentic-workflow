@@ -44,7 +44,6 @@ class GitLabMCPServer:
                 }
             
             summary_data = self.issue_service.create_issue_summary(search_result, filters)
-            print(f"Found summary_data: {summary_data}")
             return {
                 "success": True,
                 "total_issues": search_result.total_issues,
