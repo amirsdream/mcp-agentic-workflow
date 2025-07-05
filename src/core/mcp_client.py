@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 from fastmcp import Client
 from fastmcp.client.transports import SSETransport
 from ..config.settings import AppConfig
+import json
 
 class MCPClientManager:
     """Manages MCP client connections to running servers."""
@@ -55,8 +56,27 @@ class MCPClientManager:
         try:
             client = await self.get_client()
             async with client:
-                result = await client.call_tool(tool_name, arguments)
-                return result
+                call_result = await client.call_tool(tool_name, arguments)
+                
+                # Handle CallToolResult object
+                if hasattr(call_result, 'content'):
+                    # FastMCP returns CallToolResult with content list
+                    if call_result.content and len(call_result.content) > 0:
+                        content = call_result.content[0]
+                        if hasattr(content, 'text'):
+                            # Parse JSON from text content
+                            try:
+                                return json.loads(content.text)
+                            except json.JSONDecodeError:
+                                return {"success": False, "error": "Invalid JSON in response"}
+                        else:
+                            return {"success": False, "error": "No text content in response"}
+                    else:
+                        return {"success": False, "error": "Empty response from MCP server"}
+                else:
+                    # Fallback: if it's already a dict
+                    return call_result if isinstance(call_result, dict) else {"success": False, "error": "Unexpected response format"}
+                    
         except Exception as e:
             return {
                 "success": False, 

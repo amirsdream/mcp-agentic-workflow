@@ -32,7 +32,6 @@ class GitLabMCPServer:
                 month=month, state=state, labels=labels, 
                 assignee=assignee, limit=limit
             )
-            print(f"Searching issues with filters: {filters}")
             search_result = self.issue_service.search_issues(filters)
             
             if not search_result.success:
@@ -45,7 +44,7 @@ class GitLabMCPServer:
                 }
             
             summary_data = self.issue_service.create_issue_summary(search_result, filters)
-            
+            print(f"Found summary_data: {summary_data}")
             return {
                 "success": True,
                 "total_issues": search_result.total_issues,

@@ -43,7 +43,7 @@ cp .env.example .env
 
 3. **Run MCP server:**
 ```bash
-python run_server.py
+python run_server.py --transport http --port 8000
 ```
 
 4. **Run Streamlit app:**

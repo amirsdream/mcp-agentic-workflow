@@ -56,7 +56,6 @@ class IssueService:
                         
                         gitlab_issue = self._convert_gitlab_issue(issue, project_id, project.name)
                         all_issues.append(gitlab_issue)
-                        
                         # Apply limit
                         if len(all_issues) >= filters.limit:
                             break
