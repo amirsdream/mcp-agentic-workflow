@@ -1,6 +1,6 @@
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, PropertyMock
 from src.core.gitlab_client import GitLabClientManager
 from src.config.settings import GitLabConfig
 
@@ -69,14 +69,18 @@ class TestGitLabClientManager:
         
         assert result is True
     
-    # @patch('src.core.gitlab_client.gitlab.Gitlab')
-    # def test_test_connection_failure(self, mock_gitlab_class, gitlab_config):
-    #     """Test connection test failure."""
-    #     mock_gitlab_instance = Mock()
-    #     mock_gitlab_instance.user = Mock(side_effect=Exception("Auth failed"))
-    #     mock_gitlab_class.return_value = mock_gitlab_instance
+    @patch('src.core.gitlab_client.gitlab.Gitlab')
+    def test_test_connection_failure(self, mock_gitlab_class, gitlab_config):
+        """Test connection test failure."""
         
-    #     manager = GitLabClientManager(gitlab_config)
-    #     result = manager.test_connection()
+        mock_gitlab_instance = Mock()
+        mock_gitlab_instance.auth = Mock()  # Let auth succeed
         
-    #     assert result is False
+        type(mock_gitlab_instance).user = PropertyMock(side_effect=Exception("Auth failed"))
+        
+        mock_gitlab_class.return_value = mock_gitlab_instance
+        
+        manager = GitLabClientManager(gitlab_config)
+        result = manager.test_connection()
+        
+        assert result is False
