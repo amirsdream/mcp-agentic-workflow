@@ -13,13 +13,7 @@ from openai import AsyncOpenAI
 from ..config.settings import AppConfig
 from ..core.mcp_client import MCPClientManager
 
-# GitLab OAuth2 Config - UPDATE THESE VALUES
-CLIENT_ID = os.getenv("GITLAB_CLIENT_ID", "")
-CLIENT_SECRET = os.getenv("GITLAB_CLIENT_SECRET", "")
-GITLAB_URL = os.getenv("GITLAB_URL", "https://gitlab.com")
-REDIRECT_URI = "http://localhost:8501"
-
-def gitlab_auth():
+def gitlab_auth(config: AppConfig):
     """Simple GitLab OAuth2 authentication - redirects and grabs token"""
     
     # Initialize session state
@@ -36,15 +30,15 @@ def gitlab_auth():
         with st.spinner("🔄 Completing authentication..."):
             # Exchange code for token
             token_data = {
-                'client_id': CLIENT_ID,
-                'client_secret': CLIENT_SECRET,
+                'client_id': config.gitlab.client_id,
+                'client_secret': config.gitlab.client_secret,
                 'code': code,
                 'grant_type': 'authorization_code',
-                'redirect_uri': REDIRECT_URI
+                'redirect_uri': config.gitlab.redirect_uri
             }
             
             try:
-                response = requests.post(f"{GITLAB_URL}/oauth/token", data=token_data)
+                response = requests.post(f"{config.gitlab.url}/oauth/token", data=token_data)
                 if response.status_code == 200:
                     token_info = response.json()
                     st.session_state.access_token = token_info['access_token']
@@ -70,7 +64,7 @@ def gitlab_auth():
         
         if st.button("🔑 Login with GitLab"):
             state = secrets.token_urlsafe(16)
-            auth_url = f"{GITLAB_URL}/oauth/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=read_api read_user&state={state}"
+            auth_url = f"{config.gitlab.url}/oauth/authorize?client_id={config.gitlab.client_id}&redirect_uri={config.gitlab.redirect_uri}&response_type=code&scope=read_api read_user&state={state}"
             
             # Simple redirect to GitLab
             st.markdown(f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True)
@@ -82,10 +76,12 @@ class GitLabIssuesApp:
     """Streamlit application for GitLab issues with proper MCP connection."""
     
     def __init__(self):
-        # First authenticate with GitLab
-        self.gitlab_token = gitlab_auth()
-        
+        # Load config first
         self.config = self._load_config()
+        
+        # Then authenticate with GitLab
+        self.gitlab_token = gitlab_auth(self.config)
+        
         self.openai_client = AsyncOpenAI(api_key=self.config.openai.api_key)
         self.mcp_client = MCPClientManager(self.config)
         
@@ -461,15 +457,16 @@ Examples:
         st.title("🦊 GitLab Issues Assistant")
         st.markdown("Professional FastMCP-powered GitLab issues management")
         
+        # Show authenticated user info
         if self.gitlab_token:
             try:
                 headers = {'Authorization': f'Bearer {self.gitlab_token}'}
-                response = requests.get(f"{GITLAB_URL}/api/v4/user", headers=headers)
+                response = requests.get(f"{self.config.gitlab.url}/api/v4/user", headers=headers)
                 if response.status_code == 200:
                     user_info = response.json()
-                    st.success(f"👋 Welcome, {user_info.get('name', 'User')}! Connected to {GITLAB_URL}")
+                    st.success(f"👋 Welcome, {user_info.get('name', 'User')}! Connected to {self.config.gitlab.url}")
             except:
-                pass 
+                pass  # Silently handle API errors
         
         model = self.render_sidebar()
         
