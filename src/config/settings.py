@@ -11,9 +11,10 @@ class GitLabConfig:
     url: str
     token: str
     project_ids: List[str]
-    client_id: Optional[str] = None
-    client_secret: Optional[str] = None
-    redirect_uri: str = "http://localhost:8501"
+    # OAuth settings
+    client_id: str
+    client_secret: str
+    redirect_uri: str
     
     @classmethod
     def from_env(cls) -> 'GitLabConfig':
@@ -21,12 +22,20 @@ class GitLabConfig:
         url = os.getenv("GITLAB_URL", "https://gitlab.com")
         token = os.getenv("GITLAB_TOKEN", "")
         project_ids_str = os.getenv("GITLAB_PROJECT_IDS", "")
-        client_id = os.getenv("GITLAB_CLIENT_ID")
-        client_secret = os.getenv("GITLAB_CLIENT_SECRET")
+        
+        # OAuth settings
+        client_id = os.getenv("GITLAB_CLIENT_ID", "")
+        client_secret = os.getenv("GITLAB_CLIENT_SECRET", "")
         redirect_uri = os.getenv("GITLAB_REDIRECT_URI", "http://localhost:8501")
         
         if not token:
             raise ValueError("GITLAB_TOKEN environment variable is required")
+        
+        if not client_id:
+            raise ValueError("GITLAB_CLIENT_ID environment variable is required")
+            
+        if not client_secret:
+            raise ValueError("GITLAB_CLIENT_SECRET environment variable is required")
         
         project_ids = [
             pid.strip() 
