@@ -5,15 +5,86 @@ import pandas as pd
 from typing import Dict, Any
 import os 
 from datetime import datetime, timedelta
+import requests
+import urllib.parse
+import secrets
 
 from openai import AsyncOpenAI
 from ..config.settings import AppConfig
 from ..core.mcp_client import MCPClientManager
 
+# GitLab OAuth2 Config - UPDATE THESE VALUES
+CLIENT_ID = os.getenv("GITLAB_CLIENT_ID", "")
+CLIENT_SECRET = os.getenv("GITLAB_CLIENT_SECRET", "")
+GITLAB_URL = os.getenv("GITLAB_URL", "https://gitlab.com")
+REDIRECT_URI = "http://localhost:8501"
+
+def gitlab_auth():
+    """Simple GitLab OAuth2 authentication - redirects and grabs token"""
+    
+    # Initialize session state
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    if 'access_token' not in st.session_state:
+        st.session_state.access_token = None
+    
+    # Check for OAuth callback (code parameter)
+    query_params = st.query_params
+    if 'code' in query_params and not st.session_state.authenticated:
+        code = query_params['code']
+        
+        with st.spinner("🔄 Completing authentication..."):
+            # Exchange code for token
+            token_data = {
+                'client_id': CLIENT_ID,
+                'client_secret': CLIENT_SECRET,
+                'code': code,
+                'grant_type': 'authorization_code',
+                'redirect_uri': REDIRECT_URI
+            }
+            
+            try:
+                response = requests.post(f"{GITLAB_URL}/oauth/token", data=token_data)
+                if response.status_code == 200:
+                    token_info = response.json()
+                    st.session_state.access_token = token_info['access_token']
+                    st.session_state.authenticated = True
+                    
+                    # Clear URL parameters
+                    st.query_params.clear()
+                    st.success("✅ Authentication successful!")
+                    st.rerun()
+                else:
+                    st.error(f"Token exchange failed: {response.status_code}")
+            except Exception as e:
+                st.error(f"Authentication failed: {e}")
+    
+    # Main UI
+    if st.session_state.authenticated:
+        # Return token for use in app
+        return st.session_state.access_token
+    
+    else:
+        # Show login page
+        st.warning("Please authenticate with GitLab to continue")
+        
+        if st.button("🔑 Login with GitLab"):
+            state = secrets.token_urlsafe(16)
+            auth_url = f"{GITLAB_URL}/oauth/authorize?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=read_api read_user&state={state}"
+            
+            # Simple redirect to GitLab
+            st.markdown(f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True)
+        
+        st.stop()  # Stop execution until authenticated
+
+
 class GitLabIssuesApp:
     """Streamlit application for GitLab issues with proper MCP connection."""
     
     def __init__(self):
+        # First authenticate with GitLab
+        self.gitlab_token = gitlab_auth()
+        
         self.config = self._load_config()
         self.openai_client = AsyncOpenAI(api_key=self.config.openai.api_key)
         self.mcp_client = MCPClientManager(self.config)
@@ -258,6 +329,19 @@ Examples:
         with st.sidebar:
             st.header("⚙️ Configuration")
             
+            # GitLab Authentication Status
+            st.markdown("**🔐 GitLab Authentication:**")
+            if st.session_state.authenticated:
+                st.success("✅ Authenticated")
+                if st.button("🚪 Logout from GitLab"):
+                    st.session_state.authenticated = False
+                    st.session_state.access_token = None
+                    st.rerun()
+            else:
+                st.error("❌ Not authenticated")
+            
+            st.markdown("---")
+            
             model = st.selectbox("🤖 Model", ["gpt-3.5-turbo", "gpt-4o"], index=0)
             
             st.success(f"✅ GitLab: {len(self.config.gitlab.project_ids)} projects")
@@ -376,6 +460,16 @@ Examples:
         
         st.title("🦊 GitLab Issues Assistant")
         st.markdown("Professional FastMCP-powered GitLab issues management")
+        
+        if self.gitlab_token:
+            try:
+                headers = {'Authorization': f'Bearer {self.gitlab_token}'}
+                response = requests.get(f"{GITLAB_URL}/api/v4/user", headers=headers)
+                if response.status_code == 200:
+                    user_info = response.json()
+                    st.success(f"👋 Welcome, {user_info.get('name', 'User')}! Connected to {GITLAB_URL}")
+            except:
+                pass 
         
         model = self.render_sidebar()
         
