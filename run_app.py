@@ -21,6 +21,17 @@ def main():
         app = GitLabIssuesApp()
         app.run()
         
+    except ImportError as e:
+        import streamlit as st
+        st.error(f"Import error: {e}")
+        st.markdown("""
+        ### Missing Dependencies:
+        Please install required packages:
+        ```bash
+        pip install langgraph langchain-openai langchain-core
+        ```
+        """)
+        st.stop()
     except ValueError as e:
         import streamlit as st
         st.error(f"Configuration error: {e}")

@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any
 from fastmcp import FastMCP
 
 from ..config.settings import AppConfig
-from ..services.issue_service import IssueService
+from ..services.issue import IssueService
 from ..models.issue import IssueFilters
 
 class GitLabMCPServer:
@@ -11,7 +11,7 @@ class GitLabMCPServer:
     
     def __init__(self, config: AppConfig):
         self.config = config
-        self.issue_service = IssueService(config.gitlab)
+        self.issue = IssueService(config.gitlab)
         self.mcp = FastMCP("GitLab Issues Server")
         self._register_tools()
     
@@ -32,7 +32,7 @@ class GitLabMCPServer:
                 month=month, state=state, labels=labels, 
                 assignee=assignee, limit=limit
             )
-            search_result = self.issue_service.search_issues(filters)
+            search_result = self.issue.search_issues(filters)
             
             if not search_result.success:
                 return {
@@ -43,7 +43,7 @@ class GitLabMCPServer:
                     "issues": []
                 }
             
-            summary_data = self.issue_service.create_issue_summary(search_result, filters)
+            summary_data = self.issue.create_issue_summary(search_result, filters)
             return {
                 "success": True,
                 "total_issues": search_result.total_issues,
@@ -58,12 +58,12 @@ class GitLabMCPServer:
         def health_check() -> Dict[str, Any]:
             """Check the health of GitLab connection and configured projects."""
             try:
-                gitlab_healthy = self.issue_service.gitlab_manager.test_connection()
+                gitlab_healthy = self.issue.gitlab_manager.test_connection()
                 
                 accessible_projects = []
                 for project_id in self.config.gitlab.project_ids:
                     try:
-                        project = self.issue_service.gitlab_manager.client.projects.get(project_id)
+                        project = self.issue.gitlab_manager.client.projects.get(project_id)
                         accessible_projects.append({
                             "id": project_id,
                             "name": project.name,

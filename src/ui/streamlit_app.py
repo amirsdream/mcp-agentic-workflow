@@ -1,27 +1,36 @@
+"""
+Streamlit UI for GitLab Multi-Agent Assistant
+"""
+
 import streamlit as st
 import asyncio
-import json
 import pandas as pd
 from typing import Dict, Any
-import os 
-from datetime import datetime, timedelta
+import os
 
-from openai import AsyncOpenAI
 from ..config.settings import AppConfig
-from ..core.mcp_client import MCPClientManager
+from ..services.agents import AgentOrchestrator
+from ..services.workflow import WorkflowService
+from ..services.tools import ToolsService
+from ..models.gitlab import ChatMessage, AgentConfig
+
 
 class GitLabIssuesApp:
-    """Streamlit application for GitLab issues with proper MCP connection."""
+    """Main Streamlit application with multi-agent architecture"""
     
     def __init__(self):
         self.config = self._load_config()
-        self.openai_client = AsyncOpenAI(api_key=self.config.openai.api_key)
-        self.mcp_client = MCPClientManager(self.config)
         
-        if "total_tokens_used" not in st.session_state:
-            st.session_state.total_tokens_used = 0
-        if "session_cost" not in st.session_state:
-            st.session_state.session_cost = 0.0
+        # Initialize services
+        self.orchestrator = AgentOrchestrator(self.config)
+        self.workflow_service = WorkflowService(self.orchestrator)
+        self.tools_service = ToolsService(
+            self.orchestrator.openai_client, 
+            self.orchestrator.mcp_client
+        )
+        
+        # Initialize session state
+        self._initialize_session_state()
     
     def _load_config(self) -> AppConfig:
         """Load application configuration."""
@@ -31,131 +40,37 @@ class GitLabIssuesApp:
             st.error(f"Configuration error: {e}")
             st.stop()
     
-    def calculate_cost(self, tokens: int, model: str) -> float:
-        """Calculate approximate cost based on tokens and model."""
-        pricing = {
-            "gpt-3.5-turbo": 0.002 / 1000, 
-            "gpt-4o": 0.03 / 1000,         
-            "gpt-4": 0.03 / 1000,
-        }
-        return tokens * pricing.get(model, 0.002 / 1000)
+    def _initialize_session_state(self):
+        """Initialize Streamlit session state"""
+        if "total_tokens_used" not in st.session_state:
+            st.session_state.total_tokens_used = 0
+        if "session_cost" not in st.session_state:
+            st.session_state.session_cost = 0.0
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+        if "pending_query" not in st.session_state:
+            st.session_state.pending_query = None
+
+    # ========================================================================
+    # MESSAGE PROCESSING
+    # ========================================================================
     
     async def process_message(self, user_message: str, model: str) -> Dict[str, Any]:
-        """Process user message using proper OpenAI tool calling."""
-        
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_gitlab_issues",
-                    "description": "List GitLab issues from configured projects with filtering options.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "month": {
-                                "type": "string",
-                                "description": "Month filter like 'January', 'Feb 2024', 'this month', 'last month'"
-                            },
-                            "year": {
-                                "type": "string",
-                                "description": "year filter like '2024', 'this year', 'last year'"
-                            },
-                            "state": {
-                                "type": "string",
-                                "description": "Issue state: 'opened', 'closed', or 'all'",
-                                "enum": ["opened", "closed", "all"],
-                                "default": "opened"
-                            },
-                            "labels": {
-                                "type": "string",
-                                "description": "Comma-separated labels to filter by"
-                            },
-                            "assignee": {
-                                "type": "string",
-                                "description": "Filter by assignee name"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum number of issues to return",
-                                "default": 100
-                            }
-                        }
-                    }
-                }
-            }
-        ]
-        
-        system_message = {
-            "role": "system",
-            "content": """You are an AI assistant that helps users with GitLab issues.
-
-When users ask about issues WITHOUT specifying a month, ask them which month they want to see issues from.
-When users specify a month or time period, use the list_gitlab_issues tool with appropriate parameters.
-
-Examples:
-- "show me issues" → ask for month specification
-- "January bugs" → use tool with month="January", labels="bug"
-- "this month high priority" → use tool with month="this month", labels="high-priority"
-- "last month closed issues" → use tool with month="last month", state="closed"
-"""
-        }
-        
-        messages = [system_message, {"role": "user", "content": user_message}]
-        
+        """Process user message through multi-agent system or tools"""
         try:
-            response = await self.openai_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto"
-            )
-            
-            response_message = response.choices[0].message
-            tool_calls = response_message.tool_calls
-            total_tokens = response.usage.total_tokens
-            
-            if not tool_calls:
-                return {
-                    "type": "text",
-                    "content": response_message.content,
-                    "tokens_used": total_tokens
-                }
-            
-            messages.append(response_message)
-            mcp_result = None
-            
-            for tool_call in tool_calls:
-                if tool_call.function.name == "list_gitlab_issues":
-                    try:
-                        arguments = json.loads(tool_call.function.arguments)
-                        mcp_result = await self.mcp_client.call_tool("list_gitlab_issues", arguments)
-                        
-                        messages.append({
-                            "tool_call_id": tool_call.id,
-                            "role": "tool",
-                            "name": "list_gitlab_issues",
-                            "content": json.dumps(mcp_result)
-                        })
-                    except Exception as e:
-                        return {
-                            "type": "error",
-                            "content": f"Error calling MCP tool: {str(e)}",
-                            "tokens_used": total_tokens
-                        }
-            
-            final_response = await self.openai_client.chat.completions.create(
-                model=model,
-                messages=messages
-            )
-            
-            final_tokens = total_tokens + final_response.usage.total_tokens
-            
-            return {
-                "type": "mcp_response",
-                "content": final_response.choices[0].message.content,
-                "mcp_result": mcp_result,
-                "tokens_used": final_tokens
-            }
+            # Detect if this is a GitLab-related query
+            if self._is_gitlab_query(user_message):
+                # Try workflow first
+                try:
+                    print(f"Processing GitLab query: {user_message}")
+                    return await self.workflow_service.process_workflow(user_message)
+                except Exception as workflow_error:
+                    # Fallback to tools
+                    print(f"Workflow processing failed: {workflow_error}")
+                    return await self.tools_service.process_with_tools(user_message, model)
+            else:
+                # Use direct tool calling for non-GitLab queries
+                return await self.tools_service.process_with_tools(user_message, model)
             
         except Exception as e:
             return {
@@ -164,12 +79,22 @@ Examples:
                 "tokens_used": 0
             }
     
+    def _is_gitlab_query(self, message: str) -> bool:
+        """Check if message is GitLab-related"""
+        message_lower = message.lower()
+        return any(keyword in message_lower for keyword in AgentConfig.GITLAB_KEYWORDS)
+    
+    def calculate_cost(self, tokens: int, model: str) -> float:
+        """Calculate approximate cost based on tokens and model."""
+        return tokens * AgentConfig.PRICING.get(model, 0.002 / 1000)
+
+    # ========================================================================
+    # UI COMPONENTS
+    # ========================================================================
+    
     def render_quick_filters(self):
-        """Render quick filter buttons that add queries to session state."""
+        """Render quick filter buttons"""
         st.subheader("🚀 Quick Actions")
-        
-        if "pending_query" not in st.session_state:
-            st.session_state.pending_query = None
         
         col1, col2 = st.columns(2)
         
@@ -201,7 +126,13 @@ Examples:
                 st.session_state.pending_query = "give me a summary of all issues from this month with statistics"
                 st.rerun()
         
-        # Custom quick queries
+        # Agent status
+        st.markdown("---")
+        st.markdown("**🤖 Agent Status:**")
+        st.success("✅ User Proxy Agent: Active")
+        st.success("✅ GitLab Agent: Connected")
+        
+        # Example queries
         st.markdown("**💡 Example Queries:**")
         examples = [
             "Show me all enhancement requests from January",
@@ -217,7 +148,7 @@ Examples:
                 st.rerun()
     
     def render_token_usage(self, model: str):
-        """Render token usage and cost tracking."""
+        """Render token usage and cost tracking"""
         st.subheader("💰 Usage Tracking")
         
         col1, col2 = st.columns(2)
@@ -254,31 +185,33 @@ Examples:
         st.info(f"📋 Current model: {model} ({pricing_info.get(model, 'Pricing unknown')})")
     
     def render_sidebar(self):
-        """Render application sidebar with connection status and filters."""
+        """Render application sidebar"""
         with st.sidebar:
-            st.header("⚙️ Configuration")
+            st.header("⚙️ Multi-Agent Configuration")
             
-            model = st.selectbox("🤖 Model", ["gpt-3.5-turbo", "gpt-4o"], index=0)
+            model = st.selectbox("🤖 Model", ["gpt-3.5-turbo", "gpt-4o"], index=1)
             
+            st.markdown("**🔗 Agent Connections:**")
             st.success(f"✅ GitLab: {len(self.config.gitlab.project_ids)} projects")
             st.success("✅ OpenAI configured")
+            st.success("✅ User Proxy Agent ready")
+            st.success("✅ GitLab Agent ready")
             
-            if st.button("🔍 Test MCP Connection"):
-                with st.spinner("Testing MCP connection..."):
-                    health_result = asyncio.run(self.mcp_client.health_check())
-                    if health_result.get("success"):
-                        st.success("✅ MCP Server connected")
-                        if health_result.get("gitlab_connection"):
-                            st.success("✅ GitLab connection healthy")
+            if st.button("🔍 Test All Connections"):
+                with st.spinner("Testing connections..."):
+                    health_result = asyncio.run(self.orchestrator.health_check())
+                    
+                    if health_result.get("overall_status") == "healthy":
+                        st.success("✅ All systems operational")
                     else:
-                        st.error(f"❌ MCP Server: {health_result.get('error', 'Connection failed')}")
+                        st.error(f"❌ System status: {health_result.get('overall_status')}")
+                        if health_result.get("error"):
+                            st.error(f"Error: {health_result['error']}")
             
             st.markdown("---")
-            
             self.render_token_usage(model)
             
             st.markdown("---")
-            
             self.render_quick_filters()
             
             st.markdown("---")
@@ -293,28 +226,47 @@ Examples:
                 for project_id in self.config.gitlab.project_ids:
                     st.code(project_id)
             
+            with st.expander("🔧 Agent Architecture"):
+                st.markdown("""
+                **User Proxy Agent:**
+                - Handles human interaction
+                - Analyzes user queries
+                - Manages conversation flow
+                
+                **GitLab Agent:**
+                - Executes GitLab operations
+                - Manages tool interactions
+                - Processes GitLab data
+                
+                **Workflow:**
+                User → Proxy → GitLab Agent → Response
+                """)
+            
             return model
+    
+    def render_gitlab_results(self, gitlab_response: Dict[str, Any]):
+        """Render GitLab results"""
+        if not gitlab_response:
+            return
+            
+        # Handle both direct gitlab_response and nested data structure
+        data = gitlab_response.get("data", gitlab_response) if gitlab_response.get("success") else gitlab_response
         
-    def render_mcp_results(self, mcp_result: Dict[str, Any]):
-        """Render MCP tool results."""
-        if mcp_result.get("summary"):
-            st.markdown(mcp_result["summary"])
-
-        if mcp_result.get("table_data"):
-            st.markdown("### Issues Table")
-            df = pd.DataFrame(mcp_result["table_data"])
+        if data.get("table_data"):
+            st.markdown("### 📋 Issues Table")
+            df = pd.DataFrame(data["table_data"])
             st.dataframe(df, use_container_width=True, hide_index=True)
         
-        if mcp_result.get("issues"):
-            st.markdown("### Issue Details")
-            for issue in mcp_result["issues"][:5]:  # Show first 5
+        if data.get("issues"):
+            st.markdown("### 📝 Issue Details")
+            for issue in data["issues"][:5]:  # Show first 5
                 with st.expander(f"#{issue['iid']} - {issue['title']}", expanded=False):
                     col1, col2 = st.columns([2, 1])
                     
                     with col1:
                         st.write(f"**Project:** {issue['project_name']}")
                         st.write(f"**Author:** {issue['author']}")
-                        if issue['assignee']:
+                        if issue.get('assignee'):
                             st.write(f"**Assignee:** {issue['assignee']}")
                         if issue.get('description'):
                             st.write(f"**Description:** {issue['description']}")
@@ -325,7 +277,7 @@ Examples:
                         st.write(f"**Created:** {issue['created_date']}")
                         st.write(f"**Priority:** {issue.get('priority', 'normal')}")
                         
-                        if issue['labels']:
+                        if issue.get('labels'):
                             st.write("**Labels:**")
                             for label in issue['labels'][:3]:
                                 st.badge(label)
@@ -333,14 +285,14 @@ Examples:
                         st.markdown(f"[🔗 View in GitLab]({issue['web_url']})")
     
     def process_pending_query(self, model: str):
-        """Process any pending query from quick filters."""
+        """Process any pending query from quick filters"""
         if st.session_state.get("pending_query"):
             query = st.session_state.pending_query
-            st.session_state.pending_query = None  # Clear the pending query
+            st.session_state.pending_query = None
             
             st.session_state.messages.append({"role": "user", "content": query})
             
-            with st.spinner("Processing quick query..."):
+            with st.spinner("🤖 Agents processing query..."):
                 response = asyncio.run(self.process_message(query, model))
                 
                 tokens_used = response.get("tokens_used", 0)
@@ -348,52 +300,49 @@ Examples:
                 st.session_state.total_tokens_used += tokens_used
                 st.session_state.session_cost += cost
                 
+                # Create chat message
+                chat_message = ChatMessage(
+                    role="assistant",
+                    content=response["content"],
+                    gitlab_response=response.get("gitlab_response") or response.get("mcp_result"),
+                    tokens_used=tokens_used,
+                    cost=cost
+                )
+                
+                st.session_state.messages.append(chat_message.to_dict())
 
-                assistant_content = response["content"]
-                if response["type"] == "mcp_response" and response.get("mcp_result"):
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": assistant_content,
-                        "mcp_result": response["mcp_result"],
-                        "tokens_used": tokens_used,
-                        "cost": cost
-                    })
-                else:
-                    st.session_state.messages.append({
-                        "role": "assistant", 
-                        "content": assistant_content,
-                        "tokens_used": tokens_used,
-                        "cost": cost
-                    })
+    # ========================================================================
+    # MAIN APP RUNNER
+    # ========================================================================
     
     def run(self):
-        """Run the Streamlit application."""
+        """Run the Streamlit application"""
         st.set_page_config(
-            page_title="GitLab Issues Assistant (Professional)",
-            page_icon="🦊",
+            page_title="GitLab Multi-Agent Assistant",
+            page_icon="🤖",
             layout="wide"
         )
         
-        st.title("🦊 GitLab Issues Assistant")
-        st.markdown("Professional FastMCP-powered GitLab issues management")
+        st.title("🤖 GitLab Multi-Agent Assistant")
+        st.markdown("**User Proxy Agent** + **GitLab Agent** powered by LangGraph")
         
         model = self.render_sidebar()
         
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
-
+        # Process any pending queries
         self.process_pending_query(model)
         
+        # Display chat messages
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
                 
-                if message.get("mcp_result"):
-                    self.render_mcp_results(message["mcp_result"])
+                if message.get("gitlab_response"):
+                    self.render_gitlab_results(message["gitlab_response"])
                 
                 if message.get("tokens_used"):
                     st.info(f"🔢 Tokens used: {message['tokens_used']:,} | Cost: ${message.get('cost', 0):.4f}")
         
+        # Chat input
         if prompt := st.chat_input("Ask about GitLab issues..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             
@@ -401,7 +350,7 @@ Examples:
                 st.markdown(prompt)
 
             with st.chat_message("assistant"):
-                with st.spinner("Processing..."):
+                with st.spinner("🤖 Multi-agent processing..."):
                     response = asyncio.run(self.process_message(prompt, model))
                     
                     tokens_used = response.get("tokens_used", 0)
@@ -411,27 +360,30 @@ Examples:
                     
                     if response["type"] == "error":
                         st.error(response["content"])
-                    elif response["type"] == "mcp_response":
+                    elif response["type"] in ["mcp_response", "workflow_response"]:
                         st.markdown(response["content"])
-                        self.render_mcp_results(response["mcp_result"])
+                        
+                        # Handle both response types for GitLab data
+                        gitlab_data = response.get("gitlab_response") or response.get("mcp_result")
+                        if gitlab_data:
+                            self.render_gitlab_results(gitlab_data)
                     else:
                         st.markdown(response["content"])
                     
                     st.info(f"🔢 Tokens used: {tokens_used:,} | Cost: ${cost:.4f}")
             
-            assistant_content = response["content"]
-            if response["type"] == "mcp_response" and response.get("mcp_result"):
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": assistant_content,
-                    "mcp_result": response["mcp_result"],
-                    "tokens_used": tokens_used,
-                    "cost": cost
-                })
-            else:
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": assistant_content,
-                    "tokens_used": tokens_used,
-                    "cost": cost
-                })
+            # Store the response
+            chat_message = ChatMessage(
+                role="assistant",
+                content=response["content"],
+                gitlab_response=response.get("gitlab_response") or response.get("mcp_result"),
+                tokens_used=tokens_used,
+                cost=cost
+            )
+            
+            st.session_state.messages.append(chat_message.to_dict())
+
+
+if __name__ == "__main__":
+    app = GitLabIssuesApp()
+    app.run()
