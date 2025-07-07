@@ -26,7 +26,7 @@ class GitLabConfig:
         # OAuth settings
         client_id = os.getenv("GITLAB_CLIENT_ID", "")
         client_secret = os.getenv("GITLAB_CLIENT_SECRET", "")
-        redirect_uri = os.getenv("GITLAB_REDIRECT_URI", "http://localhost:8501")
+        redirect_uri = os.getenv("GITLAB_REDIRECT_URI", "http://localhost:8051")
         
         if not token:
             raise ValueError("GITLAB_TOKEN environment variable is required")

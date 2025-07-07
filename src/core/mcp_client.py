@@ -9,8 +9,9 @@ import json
 class MCPClientManager:
     """Manages MCP client connections to running servers."""
     
-    def __init__(self, config: Optional[AppConfig] = None):
+    def __init__(self, config: Optional[AppConfig] = None, user_token: Optional[str] = None):
         self.config = config
+        self.user_token = user_token
         self._client: Optional[Client] = None
         
     async def get_client(self) -> Client:
@@ -38,7 +39,12 @@ class MCPClientManager:
     
     async def _create_sse_client(self, url: str) -> Client:
         """Create SSE transport client for remote server."""
-        transport = SSETransport(url)
+        # Add user token to headers if available
+        headers = {}
+        if self.user_token:
+            headers['Authorization'] = f'Bearer {self.user_token}'
+        
+        transport = SSETransport(url, headers=headers)
         return Client(transport)
     
     async def _create_stdio_client(self) -> Client:
@@ -54,6 +60,16 @@ class MCPClientManager:
     async def call_tool(self, tool_name: str, arguments: dict) -> Dict[str, Any]:
         """Call MCP tool with proper connection management."""
         try:
+            # Add user context to arguments if not present
+            if self.user_token and 'user_token' not in arguments:
+                arguments['user_token'] = self.user_token
+            
+            # Add user_id from session state if available
+            import streamlit as st
+            if hasattr(st, 'session_state') and hasattr(st.session_state, 'current_user_id'):
+                if st.session_state.current_user_id and 'user_id' not in arguments:
+                    arguments['user_id'] = st.session_state.current_user_id
+            
             client = await self.get_client()
             async with client:
                 call_result = await client.call_tool(tool_name, arguments)

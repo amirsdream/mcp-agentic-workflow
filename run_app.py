@@ -15,10 +15,10 @@ sys.path.insert(0, str(src_path))
 def main():
     """Main entry point for Streamlit app."""
     try:
-        from src.ui.streamlit_app import GitLabIssuesApp
+        from src.ui.streamlit_app import GitLabEventsApp
         
         # Create and run app
-        app = GitLabIssuesApp()
+        app = GitLabEventsApp()
         app.run()
         
     except ValueError as e:
